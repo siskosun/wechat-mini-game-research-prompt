@@ -1,0 +1,78 @@
+name: Game radar to Feishu
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "game-radar/reports/*.md"
+  workflow_dispatch:
+    inputs:
+      report_path:
+        description: "Existing report path to resend"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: game-radar-feishu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_SIGNING_SECRET: ${{ secrets.FEISHU_SIGNING_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Validate secret configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${FEISHU_WEBHOOK_URL}" ]; then
+            echo "FEISHU_WEBHOOK_URL is not configured."
+            exit 2
+          fi
+
+      - name: Send report
+        shell: bash
+        env:
+          MANUAL_REPORT_PATH: ${{ inputs.report_path }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            report="${MANUAL_REPORT_PATH}"
+            case "${report}" in
+              game-radar/reports/*.md) ;;
+              *)
+                echo "Invalid report path: ${report}"
+                exit 2
+                ;;
+            esac
+            test -f "${report}"
+            python game-radar/send_feishu.py "${report}"
+            exit 0
+          fi
+
+          mapfile -t reports < <(
+            git diff-tree --no-commit-id --name-only --diff-filter=A -r "${GITHUB_SHA}" |
+              grep '^game-radar/reports/.*\.md$' || true
+          )
+
+          if [ "${#reports[@]}" -eq 0 ]; then
+            echo "No newly added radar report in this commit; nothing to send."
+            exit 0
+          fi
+
+          for report in "${reports[@]}"; do
+            python game-radar/send_feishu.py "${report}"
+          done
