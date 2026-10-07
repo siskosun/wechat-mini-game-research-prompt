@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one game-radar Markdown report to a Feishu custom bot webhook."""
+"""Send one game-radar report to a Feishu custom bot webhook as plain text."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -18,6 +19,29 @@ from pathlib import Path
 
 MAX_CHARS = 4500
 RETRIES = 3
+
+
+def markdown_to_plain_text(text: str) -> str:
+    """Remove common Markdown presentation syntax before Feishu delivery."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    plain_lines: list[str] = []
+    for line in text.split("\n"):
+        if re.fullmatch(r"\s*#{1,6}\s*", line):
+            continue
+        if re.fullmatch(r"\s*[-*_]{3,}\s*", line):
+            continue
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"^\s*>\s?", "", line)
+        line = re.sub(r"^\s*[-*+]\s+", "• ", line)
+        line = re.sub(r"!\[([^\]]*)\]\((https?://[^)]+)\)", lambda m: f"图片：{m.group(2)}", line)
+        line = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", lambda m: f"{m.group(1)}：{m.group(2)}", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        line = line.replace(chr(96), "")
+        plain_lines.append(line.rstrip())
+    plain = "\n".join(plain_lines)
+    plain = re.sub(r"\n{3,}", "\n\n", plain)
+    return plain.strip()
 
 
 def split_text(text: str, limit: int = MAX_CHARS) -> list[str]:
@@ -130,6 +154,7 @@ def main() -> int:
         print(f"Report is empty: {args.report}", file=sys.stderr)
         return 2
 
+    text = markdown_to_plain_text(text)
     chunks = split_text(text)
     date_label = args.report.stem
 
