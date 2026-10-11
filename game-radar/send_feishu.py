@@ -114,9 +114,12 @@ def send_once(webhook_url: str, signing_secret: str, text: str) -> None:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Feishu returned non-JSON response: {raw[:300]}") from exc
 
-    code = result.get("code")
-    status_code = result.get("StatusCode")
-    if code not in (None, 0) or status_code not in (None, 0):
+    if not isinstance(result, dict):
+        raise RuntimeError("Feishu returned an invalid acknowledgement.")
+    codes = [result[key] for key in ("code", "StatusCode") if key in result]
+    if not codes or any(type(code) is not int for code in codes):
+        raise RuntimeError("Feishu response has no explicit integer success code.")
+    if any(code != 0 for code in codes):
         message = result.get("msg") or result.get("StatusMessage") or str(result)
         raise RuntimeError(f"Feishu rejected message: {message}")
 
